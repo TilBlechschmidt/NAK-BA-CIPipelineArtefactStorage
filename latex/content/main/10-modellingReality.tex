@@ -1,0 +1,11 @@
+\section{Modelling reality}\label{sec:modelling-reality}
+    The most straightforward approach to evaluating an algorithm's performance would be to employ it in a real-world pipeline and observe the resulting behaviour. However, this method is not without drawbacks. Each algorithm requires direct integration into the existing system and thus comes with a risk of interrupting ongoing development operations. Additionally, it becomes more complicated to verify the consistency of the input data as the CI system, and developers might change their behaviour between evaluation periods (e.g. during the holidays fewer accesses might be performed or during a release, more pipelines will be running). This influences the reproducibility and comparability of the results.
+    
+    To circumvent these hazards, we will develop a simulation based on data from a real CI workflow. This ensures reproducibility as the simulation is fully deterministic and can be repeated at will.
+    
+    The following two sections describe the process of collecting data from a real-world development environment and building a simulation based on the collected input.
+    
+    \subsection{Data collection}
+        \input{content/main/modellingReality/dataCollection}
+    \subsection{Building a simulation}
+        \input{content/main/modellingReality/buildingSimulation}

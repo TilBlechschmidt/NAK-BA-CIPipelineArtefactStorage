@@ -1,0 +1,4 @@
+# Data availability
+
+As some of the data sources used for this research paper contain confidential or personal information, not all raw data sets have been made available either in the paper or the accompanying source code repository. This allows the paper itself to be published without restrictions. Some data samples used in figures have been renamed for the same reason, and names of interview partners and products have been omitted. While it is undoubtedly possible to anonymise both the raw data collected and the processed data used to generate figures and tables, this requires a significant amount of time and care. For this reason, the data will be retained by the author in its original form on a personal storage device and anonymised/distributed in an on-demand manner. If you require access to certain parts of the data for scientific reasons, please contact me directly via E-Mail at til@blechschmidt.de.
+

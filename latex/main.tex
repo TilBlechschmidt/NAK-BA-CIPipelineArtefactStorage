@@ -1,0 +1,53 @@
+\documentclass{BA}
+\usepackage[utf8]{inputenc}
+\usepackage{multicol}
+\usepackage{lipsum}
+\usepackage{wrapfig}
+\usepackage[binary-units]{siunitx}
+\usepackage{csquotes}
+
+\setupnordakademie
+\linespread{1.5}
+
+\title{Automating decision making for efficient CI pipeline artifact storage under disk space constraints}
+\author{Til Blechschmidt}
+\date{January 2021}
+
+\addbibresource{literature.bib}
+
+\begin{document}
+
+\begin{titlematter}
+    \createtitle
+\end{titlematter}
+
+\pagebreak
+
+% \hspace{0pt}
+% \vfill
+% \begin{center}
+%     I would like to give special thanks to Moritz Pluth for assisting in all matters related to the Thesis and providing valuable and highly appreciated feedback.
+% \end{center}
+% \vfill
+% \hspace{0pt}
+% \pagebreak
+
+\begin{frontmatter}
+	\inhaltsverzeichnis{}
+	\abbildungsverzeichnis{}
+	\tabellenverzeichnis{}
+	%\listingverzeichnis{}
+	%\abkuerzungsverzeichnis{}
+\end{frontmatter}
+
+\begin{multicols}{2}
+    \begin{mainmatter}
+        \include{content/main/mainmatter}
+    \end{mainmatter}
+\end{multicols}
+
+\begin{backmatter}
+    \include{content/back/backmatter}
+\end{backmatter}
+
+\end{document}

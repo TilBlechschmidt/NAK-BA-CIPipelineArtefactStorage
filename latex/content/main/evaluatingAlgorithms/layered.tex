@@ -1,0 +1,94 @@
+\subsection{Layered algorithms}\label{sec:layered}
+    \colfig{image/graphs/lineplot-layered}{Performance of layered algorithms}{fig:lineplot-layered}
+    The next category of algorithms is layered or optional algorithms. In comparison to static algorithms, they mostly rely on domain-specific information from the simulation. For this reason, they are characterised by the fact that sometimes this data is not available. For example, an algorithm that always chooses pipelines that have been merged (see section \ref{sec:algo-merged}) may not be able to choose if no merged pipelines are currently stored. For this reason, each of the algorithms in this section will have a fallback. If it is unable to decide due to lack of information, it will delegate to the fallback. We will be using the best performer of the previous section (FIFO) as our fallback algorithm\footnote{Future research may evaluate other fallback algorithms.}, and its performance is plotted as a dotted line in figure \ref{fig:lineplot-layered} for comparison.
+    
+    \subsubsection{MRU}
+        The first algorithm is called \textbf{M}ost-\textbf{R}ecently-\textbf{U}sed. As the name implies, it uses the access log to determine which artefact to delete. It will prefer those which have been accessed most recently. While it seems counter-intuitive to delete something that has just recently been accessed, there is a case to make. In their research paper Chou et al. noted that when a sequence is scanned looped sequentially, MRU is the best replacement algorithm \cite{mru-reasoning}. While we do not have a repeating scan at hand, it is reasonable to assume that a developer will access a pipeline once to determine the status and the root cause of the issue and then not reaccess it. For this reason, the algorithm may yield favourable results.
+        
+        However, it performs worse than most other algorithms and reaches a stable 30\% miss ratio (see figure \ref{fig:lineplot-layered}). It still outperforms LIFO and some of the other algorithms we will consider.
+        
+        The current implementation is only considering whether or not a pipeline has been accessed once or not and then chooses the one with the most recent access. However, developers may make multiple requests to a pipeline with a few minutes in between before the root-cause is determined and the artefact is no longer required (e.g. the developer looks at the test report and analyses the test failures, then he starts looking at the test logs and finally observes the database dump).
+        
+        To further investigate, we will derive a modified version of the MRU algorithm. This version will only consider pipelines which have at least $n$ accesses. If our theory from before holds, the performance of the algorithm should increase. Figure \ref{fig:lineplot-mru} shows MRU variations with values for $n$ ranging from 2 to 64. At first glance, the performance does increase with increasing values for $n$.
+        
+        \colfig{image/graphs/lineplot-mru}{Performance of MRU variations}{fig:lineplot-mru}
+        
+        However, as this is a layered algorithm, it can delegate its decision to a fallback algorithm. For this reason, we also have to consider the percentage of deletion requests that have been delegated. The numbers are shown in figure \ref{fig:mru-fallback} and clearly show that increasing values for $n$ also increase the delegation ratio\footnote{Which is expected since the data availability is limited.}.
+        
+        \colfig{image/graphs/mru-fallback}{Fallback ratio of MRU variations}{fig:mru-fallback}
+        
+        If we look at the MRU with $n = 64$, it is close to FIFO with only approximately 2\% difference. However, looking at the fallback ratio reveals that MRU has handled less than 1\% (2656 out of 2669) of the requests. The remaining requests have been delegated to the FIFO fallback. Despite this small number of deletion requests handled by MRU, it is performing worse. The other values for $n$ paint a similar picture. It seems that no matter the limit, MRU always performs worse than our current best contender FIFO.
+    
+    \subsubsection{LRU}
+        The next algorithm we will observe can be considered opposite to MRU as its name \textbf{L}east-\textbf{R}ecently-\textbf{U}sed implies. It operates very much the same, but instead of choosing the one accessed most recently, it picks the one whose most recent access is the furthest in the past.
+        
+        Under the assumption that every pipeline is being accessed eventually, it behaves like a more domain-specific version of FIFO — waiting until a pipeline has been accessed once and then waiting until storage space runs out to delete the "oldest" pipeline concerning accesses. If the assumption holds, it would be excepted to perform better than FIFO. However, the data in figure \ref{fig:lineplot-layered} shows that it performs worse than FIFO closer to RAND.
+        
+        To further investigate, we will take a look at the assumption made previously using a histogram. Figure \ref{fig:lru-histogram} shows the number of pipelines in relation to the number of accesses with a bucket width of 5. To make the plot more readable 18 pipelines have been excluded which each used up a single bucket in the range $210 < x < 1000$.
+        
+        \colfig{image/graphs/access-count-histogram}{Access count histogram}{fig:lru-histogram}
+        
+        % SELECT Pipeline.id AS pid, COUNT(AccessLog.timestamp) AS c FROM Pipeline LEFT JOIN AccessLog ON AccessLog.pipeline = Pipeline.id GROUP BY pid ORDER BY c DESC
+        
+        The histogram shows that a majority of pipelines are accessed less than five times. 65\% (2515 out of 3854) of pipelines are never accessed. This significantly reduces the effectiveness of the LRU algorithm as it now "competes" with FIFO. It also shows why FIFO is so efficient: As only a few pipelines are accessed, there is no significant benefit to employing domain-specific knowledge. However, it also indicates that the information whether a pipeline will be accessed at all is more critical, and an algorithm based on this might be more effective than FIFO. \label{sec:lru-relevancy-algorithm}Finding an algorithm to determine this would allow fast deletion of irrelevant pipelines and increase domain-specific algorithms' effectiveness. Further research is required to determine if it is possible to develop such an algorithm.
+        
+    \subsubsection{LF}
+        Another class of algorithms concerns itself only with the stored artefacts themselves. It uses the size of the artefacts to make a decision. The first algorithm in this class is \textbf{L}argest-\textbf{First} and as the name implies always deletes the largest stored pipeline.
+        
+        \colfig{image/graphs/pipeline-size-histogram}{Pipeline size histogram}{fig:pipeline-size-histogram}
+        
+        To gain insight into why this algorithm might be advantageous, we will be consulting the pipeline size histogram\footnote{As opposed to the size sample boxplot from earlier, this uses the accumulated pipeline sizes which are calculated by summing up all job samples of a pipeline. Additionally, it does not include pipelines with insufficient samples for any job.} in figure \ref{fig:pipeline-size-histogram} with a bucket size of 200 Megabytes. While some pipelines are located in the mid-range, most of them form two extremes at less than 600MB and around 5GB.
+        
+        Using this information, the advantage of purging the largest pipeline first becomes evident. Deleting a single large pipeline has a high chance of making room for a large number of small pipelines, thus maximising the number of stored pipelines at any given time.
+        
+        \begin{Figure}
+            \begin{center}
+                \begin{tabular}{ l | r | r }
+                    Algorithm & Stored (avg) & Deleted \\ \hline \hline
+                    FIFO & 217 & 2669\\
+                    LIFO & 224 & 2705\\
+                    RAND & 216 & 2672\\ \hline
+                    MRU & 234 & 2594\\
+                    LRU & 234 & 2593\\
+                    \rowcolor{nordakademie-blue!10}LF & 755 & 1609\\
+                    SF & 105 & 2826\\
+                    MERGED & 203 & 2709\\
+                    STATUS & 194 & 2743\\ \hline
+                    SCORE & 217 & 2669\\
+                \end{tabular}
+            \end{center}
+            \captionof{table}{Algorithm storage behaviour overview}
+            \label{tbl:algorithm-delete-store-counts}
+        \end{Figure}
+        
+        To confirm this, we may look at the data in table \ref{tbl:algorithm-delete-store-counts}. It shows the arithmetic average of the number of stored pipelines throughout the simulation and the total number of deleted pipelines at the end for each algorithm. It becomes evident that LF is by far outperforming all others regarding the number of stored pipelines. Simultaneously, the number of deleted pipelines is at a low too.
+        
+        Overall, this would be expected to increase the performance of the algorithm. However, figure \ref{fig:lineplot-layered} reveals that it performs worse overall than MRU with a final access miss ratio of 55\%. This phenomenon could be explained by considering the timeline of storage events. Let us consider a scenario where we start by deleting a large pipeline of 5GB to make room and then receive one small pipeline of 10MB. If we attempted to store another large pipeline of 5GB, it would not fit anymore. In a sense, this can be considered similar to MRU where the most-recently added pipeline, in this case, constrained to large pipelines\footnote{Which are accounting for almost half the pipelines according to figure \ref{fig:pipeline-size-histogram}.}, when the disk is under pressure. Additionally, it comes with similar if not worse drawbacks than MRU as very small (but potentially old) pipelines are expected to stay in storage almost indefinitely. So while we are maximising the number of concurrently stored pipelines, this algorithm can not optimise the access hit ratio.
+    
+    \subsubsection{SF}
+        Looking at another algorithm in the same class, \textbf{S}mallest-\textbf{F}irst behaves exactly opposite to LF. It deletes the smallest pipeline in storage. It shares the same drawbacks as it maximises the size of the stored pipelines and is expected to keep the largest of all pipelines in storage indefinitely. Contrary to LF, it minimises the number of stored artefacts (as seen in table \ref{tbl:algorithm-delete-store-counts}) and is thus expected to perform even worse. This is confirmed by the data in figure \ref{fig:lineplot-layered}, with up to 75\% missed accesses. It is the worst performer of all algorithms so far. 
+        
+    \subsubsection{MERGED}\label{sec:algo-merged}
+        The next algorithm we will take into consideration is using domain-specific data. More specifically, the status of a merge request associated with a pipeline. It is expected that artefacts belonging to a merged feature branch are no longer needed. However, this algorithm's effectiveness will be heavily constrained as only a subset of pipelines have associated merge requests. While querying the data source, it became clear that most of the pipelines with no associated merge request have been triggered automatically. Using a two-step filtering approach for these might potentially increase the performance of this algorithm. Taking a look at the fallback ratio reveals that the merge logic has handled 33,3\% (901 out of 2708) of deletion requests, the remainder was delegated to FIFO. Despite this, the algorithm outperforms its delegate during almost the entire simulation and ties with it at the end (see figure \ref{fig:lineplot-layered}). In general, it can be considered the best algorithm so far and one of the two-layered ones beating a purely static algorithm, although not by a significant margin.
+        
+    \subsubsection{STATUS}
+        The final layered algorithm we will consider also relies on domain-specific inputs. In this case, it is the exit status of the pipeline. The algorithm will delete artefacts of successful pipelines first, purge anything that did not fail (e.g. aborted pipelines), and finally delegates to FIFO.
+        
+        This algorithm's logic is based on the assumption that developers will not or at the very least are unlikely to be accessing successful pipelines. By looking at the simulation input data in table \ref{tbl:pipeline-status-access-relation}, we can confirm that the vast majority of accesses are made to failed pipelines.
+        
+        \begin{Figure}
+            \begin{center}
+                \begin{tabular}{ l | r }
+                    Status & Accesses \\ \hline
+                    Failed & 50830\\
+                    Success & 1985\\
+                    Cancelled & 57\\
+                    Skipped & 0\\
+                \end{tabular}
+            \end{center}
+            \captionof{table}{Access counts by pipeline status}
+            \label{tbl:pipeline-status-access-relation}
+        \end{Figure}
+        % SELECT Pipeline.id AS pid, Pipeline.status AS ps, COUNT(AccessLog.id) AS ac FROM Pipeline LEFT JOIN AccessLog ON Pipeline.id = AccessLog.pipeline GROUP BY ps
+        
+        Thus this algorithm is expected to perform very well. Comparing its actual performance against the other algorithms in figure \ref{fig:lineplot-layered} confirms this with approximately 1-2\% gain over FIFO. However, it performs slightly worse than FIFO at the end of the simulation, but the difference is marginal, especially when averaging it out over the full simulation.

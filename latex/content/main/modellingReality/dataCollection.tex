@@ -1,0 +1,84 @@
+For this research, we will be collecting data from a development team at PPI AG. The team is comprised of approximately 47 employees who actively use the CI system and interact with the generated reports daily. The pipelines can be split into two implicit categories:
+\begin{itemize}
+    \item Scheduled jobs
+    \item Developer triggered jobs
+\end{itemize}
+Scheduled jobs run at fixed intervals and for predefined branches of the VCS\footnote{Namely release branches and those from which developers branch off into feature branches.}. Triggered jobs are executed for every code change pushed into the VCS by a developer, regardless of the associated branch. According to developers from the team, most of them are only indirectly linked with a merge request in GitLab\footnote{They do not trigger the pipelines based on the merge requests and thus the link is only implicit through the shared commits.}.
+
+Next, we need to define what kind of information the simulation should take as an input. The following subsections each describe a data source, what information it provides, how that information is collected, and how it is processed. During the capture stage, all sources use different methods of collection. However, each source eventually yields a structured text file. These text files are processed by a purpose-built Data Cleansing tool that converts the raw input data into a clean and aggregated data set for each source which is stored inside an SQLite database that is shared between all sources. This database will serve as the input to the simulation.
+
+Storing the data in a structured database instead of to serialising it to disk has the advantage of a simple query interface. Additional features like Indices may aid the simulation's performance. While it is not relevant for our dataset, it also allows processing inputs that do not fit into the system memory.
+
+All collectors and data cleansing tools used are provided in the accompanying source code repository. % \todo{Include a structural overview plot of all data collection components}
+
+\subsubsection{GitLab Data}
+    GitLab (mainly a version control system frontend) and GitLab CI (a CI pipeline system integrated with GitLab) provide many inputs. The most notable information is about pipelines. This includes but is not limited to their creation date, duration, associated Git ref, executed jobs, and whether it succeeded or failed. It also provides information about Merge Requests, their lifecycle, and linked branches. The latter allows cross-referencing of pipelines with Merge Requests\footnote{This particular project does not link Merge Requests with Pipelines using GitLab. For that reason, it is necessary to manually associate them in our data set.}. The data from GitLab has been captured using the built-in webhook feature which calls an HTTP endpoint every time a status change occurs \cite{gitlab-webhook}. It should be noted that particular caution is necessary when collecting data from this source. As the project has a sizeable amount of active contributors and a substantial pipeline flow, it may no longer be assumed that webhooks are executed sequentially but rather in parallel. Thus, merely appending to a file without a locking mechanism yields inconsistent and corrupted data. For this reason, a simple in-memory locking of the file resource has been implemented in the collector server.
+    
+    The first few days of the collected webhook payloads have been discarded due to corruption from the aforementioned issue. The remaining payloads have been parsed and validated according to the GitLab webhook documentation (see \cite{gitlab-webhook}). Merge Request events have not been post-processed further and are relayed directly into the SQLite database. Pipelines, however, did require cleansing. Upon inspection, it became evident that GitLab issues multiple events for a pipeline even after completion. These events contain different duration values and finish timestamps with partially inconsistent data (the difference between the creation-timestamp and finish-timestamp did not equal the duration). A manual check of some samples showed that the first event that indicates a completion state equals the data displayed on the GitLab user interface. For this reason, only the first event indicating a completion will be taken into account. Additionally, the names of all the individual build jobs have been aggregated and collected in the database.
+    
+    In total, 709.116 webhook payloads have been collected over six weeks. Of these payloads, 92.977 have been discarded due to corruption\footnote{While not all events in this set were corrupted, the data can not be expected to be consistent. For that reason, all payloads that were collected before the implementation was fixed have been discarded.}. After processing, 1868 Merge Request events and metadata of 3771 pipelines remain.
+    
+\subsubsection{Access log}\label{sec:data-source-access-log}
+    Access to pipeline artefacts is realised through an Nginx web server. This allows capturing of all accesses by utilising the default logging facilities provided by the server. The resulting log file contains one access and all associated metadata per line.
+    
+    Special consideration needs to be taken since the running system is actively deleting old artefacts. This removes the pipelines from directory listing and thus the intent to access a specific pipeline would not be captured in the access log. A personal interview with one of the development operation engineers revealed that the developers hardly ever encounter pipeline artefacts that have already been deleted. During the interview, it was also mentioned that their primary way of accessing artefacts is through a direct link embedded in the teams' task management system. This reduces the impact of the issue above as direct accesses to pipeline directories will show up in the access log and are thus used for simulation purposes (13\% (2165) of the requests after data cleansing were to already deleted or only partially available resources\footnote{It should be noted that a failed pipeline does not generate some of the directly linked resources causing some of the aforementioned failed requests.} which supports the information from the interview).
+    
+    Another influential factor is the active compression of stored artefacts and a download feature. The former partially compresses artefacts into archives which only allow bundled access to files. The latter allows developers to download all artefacts and access them at a later point in time on their local machine. These two features might reduce the usefulness of a per-file access log as it is no longer possible to track accesses to individual files when these features are used. However, only 0,2\% (37) of all accesses after data cleansing were made to compressed resources and 0,25\% (41) download requests. The impact of these features on the overall data quality can, therefore, be considered insignificant.
+    
+    The access data is highly contaminated with automated requests like status probes and follow-up requests like resources included by an HTML file. For data cleansing, two categories have been defined for requests that may be excluded: Automated requests and irrelevant requests. The former includes requests dispatched by automated tools or browsers requesting additional linked resources like stylesheets or Javascript. The latter includes high-level directory listings, web-server log files, or requests made by the author for research purposes\footnote{The author used a special User-Agent for all research related requests to allow filtering.}. The exact filters and conditionals used may be looked up in the provided source code.
+    
+    Over eight weeks, 281.484 access log entries have been collected. Two entries were corrupted, and 113.154 have been excluded as they were collected before the data from GitLab became available. Of the remaining 168.328 entries, 151.749 are irrelevant. This leaves 16.579 access entries, and in total, 1.339 different pipelines have been accessed.
+
+\subsubsection{Pipeline artefacts}\label{sec:data-source-sizes}
+    Another relevant information for our simulation is the size of each pipeline. There are multiple ways to approach this. The arguably most simplistic one is to observe each artefact on disk and log its size. However, as each pipeline produces approximately 90.000 files and those are stored on HDDs with a cluster file-system layered on top, collecting this information comes with a significant I/O load. As the reporting system is already close to capacity in this regard, this option is unviable. Another approach would be to intercept the tool's log output, which transfers the data onto the storage device. While this method does not incur high runtime costs, it requires modifications to the pipeline definition as the tool is currently not configured to output the required metrics. Its output is not recorded in an accessible manner. The last option we will consider is to take a snapshot of the currently stored pipelines and run a static analysis on them. Each pipeline executes several jobs where each job is a combination of an environment and test suite\footnote{This ignores build jobs as they do not produce any artifacts which are stored long-term.}. Based on the snapshot, we can derive each job type's size and infer sizes of pipelines statistically. This has the added benefit that we can approximate the size of pipelines executed outside of the capture time frame.
+    
+    At the time of writing, the reporting system was moved to a new storage backend. For this reason, a snapshot of the last artefacts stored is available and no longer in use by any other systems. Due to this and the fact that no modifications to the pipeline system are required, the snapshot approach will be used. As mentioned previously, the reporting system automatically compresses parts of the artefacts. To compensate for this, all archives within the observed data set have been queried for their respective uncompressed size and the delta between the compressed and uncompressed size has been added to the overall size of a job.
+    
+    Data is collected using the command line tools \code{find}, \code{du} and \code{gzip}. As the snapshot contains some aliased directories, each data point is matched with a regular expression to filter out the aliases\footnote{The exact source code used is provided in the accompanying repository}. In total, 12.632 compressed archives have been found out of which 6.789 did not match the path requirements. Additionally, 8.618 size samples of 61 different jobs were collected. Seven empty samples and 972 that did not match the path requirements were discarded.
+    
+    The collected size samples have been plotted in figure \ref{fig:size-boxplot} (in the Appendix on page \pageref{fig:size-boxplot}). The logarithmic X-axis shows the size while the Y-axis contains groups of test suites. Each group contains samples for each environment. Since not every combination did have samples, some have been omitted. Additionally, jobs with less than 30 samples (a total of 25\% (16)) are excluded from both the graph and the simulation as their statistical significance is questionable. The reasoning behind this cutoff value will be explained later in section \ref{sec:abstraction-size-sampling} on page \pageref{sec:abstraction-size-sampling}.
+    
+    % SELECT COUNT(*) as count, environment, testSuite FROM JobSizeSample GROUP BY environment, testSuite ORDER BY count DESC
+    % 735	ppi	    inside-cutoff-gui-acceptance-test
+    % 729	ppi	    inside-cutoff-server-acceptance-test
+    % 436	all	    checkstyle
+    % 344	all	    qa-test
+    % 342	ppi	    launch-build-pod
+    % 305	all	    integration-test
+    % 279	ppi	    inside-cutoff-acceptance-test
+    % 242	ppi	    holiday-acceptance-test
+    % 240	ppi	    outside-cutoff-acceptance-test
+    % 229	bego	launch-build-pod
+    % 211	aareal	launch-build-pod
+    % 199	bego	inside-cutoff-acceptance-test
+    % 192	bego	holiday-acceptance-test
+    % 192	bego	outside-cutoff-acceptance-test
+    % 178	aareal	inside-cutoff-acceptance-test
+    % 177	aareal	outside-cutoff-acceptance-test
+    % 177	ppi	    ip-offline-acceptance-test
+    % 175	aareal	holiday-acceptance-test
+    % 174	geno	launch-build-pod
+    % 165	ppi	    ip-online-acceptance-test
+    % 156	ppi	    ip-gui-acceptance-test
+    % 152	geno	ip-offline-acceptance-test
+    % 149	geno	ip-gui-acceptance-test
+    % 148	geno	ip-online-acceptance-test
+    % 138	bego	inside-cutoff-gui-acceptance-test
+    % 120	genoazv	launch-build-pod
+    % 119	hcob	launch-build-pod
+    % 100	genoazv	inside-cutoff-acceptance-test
+    % 97	genoazv	outside-cutoff-acceptance-test
+    % 96	genoazv	holiday-acceptance-test
+    % 92	bego	inside-cutoff-server-acceptance-test
+    % 76	ppi	    sepa-acceptance-test
+    % 64	hcob	inside-cutoff-server-acceptance-test
+    % 62	hcob	inside-cutoff-acceptance-test
+    % 53	ppi	    weekday-before-reorg-gui-acceptance-test
+    % 48	hcob	holiday-acceptance-test
+    % 47	hcob	outside-cutoff-acceptance-test
+    % Everything else is <=30
+
+\subsubsection{Other metadata}
+    Another potentially valuable data source is the teams' task management system. Since it tracks all features and tests' status, it might indicate whether or not the pipeline results are still needed. However, acquisition of this kind of data is out of scope due to various internal reasons.
+    
+    In contrast to that stands a feature of the current storage system that allows developers to explicitly flag artefacts as important, indicating that they should be stored for a more extended period. While this feature, in theory, provides a high-quality data source as it directly captures the intent of the user, it was not used during the observed timeframe\footnote{The usage data for this feature is available from the access log as it operates based on HTTP requests.}. This behaviour was confirmed through a personal interview with one of the lead developers.

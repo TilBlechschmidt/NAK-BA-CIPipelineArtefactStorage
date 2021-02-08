@@ -1,0 +1,19 @@
+\subsection{Static algorithms}\label{sec:static}
+    The static algorithm category includes those that take static inputs from the simulation (e.g. chronologically ordered list of stored pipelines) and always yield a result. Most of the algorithms will be using a simple data structure to make their decisions.
+    
+    \colfig{image/graphs/lineplot-static}{Performance of static algorithms}{fig:lineplot-static}
+    
+    \subsubsection{FIFO}
+        The first static algorithm to evaluate will be using a simple queue data structure. This data structure allows elements to be added at one end and retrieved at the other \cite{data-structures}. Effectively, this means that the first item that goes in is also the first item that goes out, which can be abbreviated to \textbf{F}irst-\textbf{I}n-\textbf{F}irst-\textbf{O}ut. This approach will ensure that every pipeline will be treated the same and stored for the maximum duration that is possible with the given storage limit\footnote{Note that this is the maximum possible duration when treating all pipelines the same. By favouring larger pipelines, the storage duration for smaller pipelines would be increased.}. In theory, it is expected to be a very balanced approach. Under the assumption that every developer is triggering the same pipelines with the same failure scenario and similar debugging times (and thus access requirements), this is expected to perform very well. However, it is unclear how closely the real-world matches this assumption.
+        
+        The data in figure \ref{fig:lineplot-static} shows that FIFO is performing relatively well in relation to other static algorithms, as expected, with a performance between 3\% and 5\% and only slight fluctuations\footnote{These fluctuations are likely caused by differences in the input data.}.
+    
+    \subsubsection{LIFO}
+        The next algorithm in line is similar to FIFO, but instead of using a queue, it uses a stack as the underlying data structure. With a stack, elements can be appended at one end but only be retrieved from the same end in the reverse order \cite{data-structures}. In short, this means that the last item that goes in is the first item that comes back out or \textbf{L}ast-\textbf{In}-\textbf{F}irst-\textbf{O}ut. Since this implies that the first artefact that comes in is likely going to stay stored for the whole duration, while newer ones will almost immediately be purged, it is expected that this algorithm performs comparatively poorly in this use-case.
+        
+        The data in figure \ref{fig:lineplot-static} confirms this. The algorithm initially performs somewhat acceptable as pipelines stored in the beginning are still being accessed but quickly approaches an 80\% miss-ratio as the disk fills up. It is the worst performer out of the three static algorithms.
+        
+    \subsubsection{RAND}
+        The last static algorithm we will consider is not using the data provided by the simulation at all. Instead, it keeps an internal state of a pseudo-random number generator\footnote{Which is seeded with the same seed as the simulation but operates independently.}. The PRNG in use is a Rust implementation of the ChaCha block cypher with 12 rounds \cite{rand-docs}. It is used to select an element from the list of stored pipelines at random. While this algorithm is not expected to perform better than any other algorithm with domain-specific knowledge, it should serve as a practical reference value. If any other algorithm performs worse than random even with contextual information about pipelines, it may indicate that some assumptions in its design have been ill-advised.
+        
+        As expected, the data in figure \ref{fig:lineplot-static} confirms that the random approach performs worse than FIFO, which we previously considered sensible when taking domain knowledge into account, and better than LIFO, which we deemed ineffective.
